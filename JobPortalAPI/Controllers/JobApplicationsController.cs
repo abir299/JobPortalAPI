@@ -1,4 +1,5 @@
 ﻿using JobPortalAPI.Data;
+using JobPortalAPI.DTOs.Applications;
 using JobPortalAPI.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -36,7 +37,8 @@ namespace JobPortalAPI.Controllers
                                a.JobSeekerId == userId);
 
             if (alreadyApplied)
-                return BadRequest("You have already applied for this job.");
+                return BadRequest(
+                    "You have already applied for this job.");
 
             var application = new JobApplication
             {
@@ -68,13 +70,15 @@ namespace JobPortalAPI.Controllers
             var applications = await _context.JobApplications
                 .AsNoTracking()
                 .Where(a => a.JobSeekerId == userId)
-                .Select(a => new
+                .Select(a => new JobApplicationResponseDto
                 {
-                    a.Id,
-                    a.JobId,
+                    Id = a.Id,
+                    JobId = a.JobId,
                     JobTitle = a.Job!.Title,
-                    a.AppliedAt,
-                    a.Status
+                    JobSeekerId = a.JobSeekerId,
+                    JobSeekerName = a.JobSeeker!.FullName,
+                    AppliedAt = a.AppliedAt,
+                    Status = a.Status
                 })
                 .ToListAsync();
 
@@ -85,16 +89,8 @@ namespace JobPortalAPI.Controllers
         [HttpPut("{applicationId:int}/status")]
         public async Task<IActionResult> UpdateStatus(
             int applicationId,
-            [FromBody] UpdateApplicationStatus request)
+            [FromBody] UpdateApplicationStatusDto request)
         {
-            if (request.Status != "Reviewed" &&
-                request.Status != "Shortlisted" &&
-                request.Status != "Rejected" &&
-                request.Status != "Accepted")
-            {
-                return BadRequest("Invalid application status.");
-            }
-
             var application = await _context.JobApplications
                 .Include(a => a.Job)
                 .FirstOrDefaultAsync(a => a.Id == applicationId);
@@ -107,9 +103,7 @@ namespace JobPortalAPI.Controllers
 
             if (application.Job!.EmployerId != userId &&
                 !User.IsInRole("Admin"))
-            {
                 return Forbid();
-            }
 
             application.Status = request.Status;
             await _context.SaveChangesAsync();
@@ -133,24 +127,19 @@ namespace JobPortalAPI.Controllers
                 .AsNoTracking()
                 .Where(a => User.IsInRole("Admin") ||
                             a.Job!.EmployerId == userId)
-                .Select(a => new
+                .Select(a => new JobApplicationResponseDto
                 {
-                    a.Id,
-                    a.JobId,
+                    Id = a.Id,
+                    JobId = a.JobId,
                     JobTitle = a.Job!.Title,
-                    a.JobSeekerId,
+                    JobSeekerId = a.JobSeekerId,
                     JobSeekerName = a.JobSeeker!.FullName,
-                    a.AppliedAt,
-                    a.Status
+                    AppliedAt = a.AppliedAt,
+                    Status = a.Status
                 })
                 .ToListAsync();
 
             return Ok(applications);
         }
-    }
-
-    public class UpdateApplicationStatus
-    {
-        public string Status { get; set; } = string.Empty;
     }
 }

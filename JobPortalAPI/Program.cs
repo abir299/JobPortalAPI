@@ -1,3 +1,5 @@
+using JobPortalAPI.Interfaces;
+using JobPortalAPI.Services;
 using System.Text;
 using JobPortalAPI.Data;
 using Microsoft.EntityFrameworkCore;
@@ -7,6 +9,7 @@ using Microsoft.IdentityModel.Tokens;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+builder.Services.AddScoped<IJobService, JobService>();
 
 builder.Services.AddDbContext<JobPortalDbContext>(options =>
     options.UseSqlServer(

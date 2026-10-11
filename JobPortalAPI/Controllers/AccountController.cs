@@ -1,9 +1,9 @@
-﻿
-using JobPortalAPI.Data;
+﻿using JobPortalAPI.Data;
+using JobPortalAPI.DTOs.Account;
 using JobPortalAPI.Models;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -28,22 +28,22 @@ namespace JobPortalAPI.Controllers
         }
 
         [HttpPost("register")]
-        public async Task<IActionResult> Register(User user)
+        public async Task<IActionResult> Register(RegisterDto request)
         {
-            if (string.IsNullOrWhiteSpace(user.FullName) ||
-                string.IsNullOrWhiteSpace(user.Email) ||
-                string.IsNullOrWhiteSpace(user.PasswordHash))
-                return BadRequest("Name, email and password are required.");
+            var email = request.Email.Trim().ToLowerInvariant();
 
-            if (await _context.Users.AnyAsync(u => u.Email == user.Email))
-                return BadRequest("Email already exists.");
+            if (await _context.Users.AnyAsync(u => u.Email == email))
+                return BadRequest(new { message = "Email already exists." });
 
-            user.Id = 0;
-            user.Email = user.Email.Trim().ToLowerInvariant();
+            var user = new User
+            {
+                FullName = request.FullName.Trim(),
+                Email = email,
+                Role = "JobSeeker"
+            };
 
-            var password = user.PasswordHash;
-            user.PasswordHash = _passwordHasher.HashPassword(user, password);
-            user.Role = "JobSeeker";
+            user.PasswordHash = _passwordHasher.HashPassword(
+                user, request.Password);
 
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
@@ -52,7 +52,7 @@ namespace JobPortalAPI.Controllers
         }
 
         [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] LoginRequest request)
+        public async Task<IActionResult> Login(LoginDto request)
         {
             var email = request.Email.Trim().ToLowerInvariant();
 
@@ -60,13 +60,19 @@ namespace JobPortalAPI.Controllers
                 .FirstOrDefaultAsync(u => u.Email == email);
 
             if (user == null)
-                return Unauthorized("Invalid email or password.");
+                return Unauthorized(new
+                {
+                    message = "Invalid email or password."
+                });
 
             var result = _passwordHasher.VerifyHashedPassword(
                 user, user.PasswordHash, request.Password);
 
             if (result == PasswordVerificationResult.Failed)
-                return Unauthorized("Invalid email or password.");
+                return Unauthorized(new
+                {
+                    message = "Invalid email or password."
+                });
 
             var claims = new[]
             {
@@ -77,7 +83,8 @@ namespace JobPortalAPI.Controllers
             };
 
             var key = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
+                Encoding.UTF8.GetBytes(
+                    _configuration["Jwt:Key"]!));
 
             var token = new JwtSecurityToken(
                 claims: claims,
@@ -92,11 +99,5 @@ namespace JobPortalAPI.Controllers
                 role = user.Role.Trim()
             });
         }
-    }
-
-    public class LoginRequest
-    {
-        public string Email { get; set; } = string.Empty;
-        public string Password { get; set; } = string.Empty;
     }
 }

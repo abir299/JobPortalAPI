@@ -1,9 +1,7 @@
-﻿
-using JobPortalAPI.Data;
-using JobPortalAPI.Models;
+﻿using JobPortalAPI.DTOs.Jobs;
+using JobPortalAPI.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace JobPortalAPI.Controllers
@@ -12,160 +10,99 @@ namespace JobPortalAPI.Controllers
     [ApiController]
     public class JobsController : ControllerBase
     {
-        private readonly JobPortalDbContext _context;
+        private readonly IJobService _jobService;
 
-        public JobsController(JobPortalDbContext context)
+        public JobsController(IJobService jobService)
         {
-            _context = context;
+            _jobService = jobService;
         }
 
-        // Public: search and view jobs
         [HttpGet]
         public async Task<IActionResult> GetJobs(
-            string? search, string? location, string? category,
-            int page = 1, int pageSize = 10)
+            string? search,
+            string? location,
+            string? category,
+            int page = 1,
+            int pageSize = 10)
         {
             if (page < 1 || pageSize < 1 || pageSize > 100)
                 return BadRequest("Invalid pagination values.");
 
-            var query = _context.Jobs.AsNoTracking().AsQueryable();
+            var jobs = await _jobService.GetJobsAsync(
+                search, location, category, page, pageSize);
 
-            if (!string.IsNullOrWhiteSpace(search))
-                query = query.Where(j =>
-                    j.Title.Contains(search) ||
-                    j.Description.Contains(search) ||
-                    j.CompanyName.Contains(search));
-
-            if (!string.IsNullOrWhiteSpace(location))
-                query = query.Where(j => j.Location.Contains(location));
-
-            if (!string.IsNullOrWhiteSpace(category))
-                query = query.Where(j => j.Category == category);
-
-            var total = await query.CountAsync();
-
-            var jobs = await query
-                .OrderByDescending(j => j.PostedAt)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .Select(j => new
-                {
-                    j.Id,
-                    j.Title,
-                    j.Description,
-                    j.CompanyName,
-                    j.Location,
-                    j.Salary,
-                    j.Category,
-                    j.PostedAt,
-                    j.EmployerId
-                })
-                .ToListAsync();
-
-            return Ok(new { total, page, pageSize, jobs });
+            return Ok(jobs);
         }
 
         [HttpGet("{id:int}")]
         public async Task<IActionResult> GetJob(int id)
         {
-            var job = await _context.Jobs
-                .AsNoTracking()
-                .Where(j => j.Id == id)
-                .Select(j => new
-                {
-                    j.Id,
-                    j.Title,
-                    j.Description,
-                    j.CompanyName,
-                    j.Location,
-                    j.Salary,
-                    j.Category,
-                    j.PostedAt,
-                    j.EmployerId
-                })
-                .FirstOrDefaultAsync();
+            var job = await _jobService.GetJobByIdAsync(id);
 
-            return job == null ? NotFound() : Ok(job);
+            if (job == null)
+                return NotFound();
+
+            return Ok(job);
         }
 
-        // Employer only
         [Authorize(Roles = "Employer,Admin")]
         [HttpPost]
-        public async Task<IActionResult> CreateJob(Job job)
+        public async Task<IActionResult> CreateJob(JobCreateDto request)
         {
-            if (string.IsNullOrWhiteSpace(job.Title) ||
-                string.IsNullOrWhiteSpace(job.Description) ||
-                string.IsNullOrWhiteSpace(job.CompanyName) ||
-                string.IsNullOrWhiteSpace(job.Location) ||
-                string.IsNullOrWhiteSpace(job.Category) ||
-                job.Salary < 0)
-                return BadRequest("Valid job details are required.");
-
-            var userId = int.Parse(
+            var employerId = int.Parse(
                 User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
-            job.Id = 0;
-            job.EmployerId = userId;
-            job.PostedAt = DateTime.UtcNow;
+            var job = await _jobService.CreateJobAsync(
+                request, employerId);
 
-            _context.Jobs.Add(job);
-            await _context.SaveChangesAsync();
-
-            return CreatedAtAction(nameof(GetJob),
-                new { id = job.Id }, job);
+            return Ok(job);
         }
 
         [Authorize(Roles = "Employer,Admin")]
         [HttpPut("{id:int}")]
-        public async Task<IActionResult> UpdateJob(int id, Job updatedJob)
+        public async Task<IActionResult> UpdateJob(
+            int id, JobUpdateDto request)
         {
-            var job = await _context.Jobs.FindAsync(id);
-            if (job == null) return NotFound();
-
             var userId = int.Parse(
                 User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
-            if (job.EmployerId != userId &&
-                !User.IsInRole("Admin"))
+            try
+            {
+                var updated = await _jobService.UpdateJobAsync(
+                    id, request, userId, User.IsInRole("Admin"));
+
+                if (!updated)
+                    return NotFound();
+
+                return NoContent();
+            }
+            catch (UnauthorizedAccessException)
+            {
                 return Forbid();
-
-            if (string.IsNullOrWhiteSpace(updatedJob.Title) ||
-                string.IsNullOrWhiteSpace(updatedJob.Description) ||
-                string.IsNullOrWhiteSpace(updatedJob.CompanyName) ||
-                string.IsNullOrWhiteSpace(updatedJob.Location) ||
-                string.IsNullOrWhiteSpace(updatedJob.Category) ||
-                updatedJob.Salary < 0)
-                return BadRequest("Valid job details are required.");
-
-            job.Title = updatedJob.Title;
-            job.Description = updatedJob.Description;
-            job.CompanyName = updatedJob.CompanyName;
-            job.Location = updatedJob.Location;
-            job.Salary = updatedJob.Salary;
-            job.Category = updatedJob.Category;
-
-            await _context.SaveChangesAsync();
-            return Ok(job);
+            }
         }
 
         [Authorize(Roles = "Employer,Admin")]
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> DeleteJob(int id)
         {
-            var job = await _context.Jobs.FindAsync(id);
-            if (job == null) return NotFound();
-
             var userId = int.Parse(
                 User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
-            if (job.EmployerId != userId &&
-                !User.IsInRole("Admin"))
+            try
+            {
+                var deleted = await _jobService.DeleteJobAsync(
+                    id, userId, User.IsInRole("Admin"));
+
+                if (!deleted)
+                    return NotFound();
+
+                return NoContent();
+            }
+            catch (UnauthorizedAccessException)
+            {
                 return Forbid();
-
-            _context.Jobs.Remove(job);
-            await _context.SaveChangesAsync();
-
-            return NoContent();
+            }
         }
     }
 }
