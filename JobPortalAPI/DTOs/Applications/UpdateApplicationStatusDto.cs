@@ -1,11 +1,14 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿
+using System.ComponentModel.DataAnnotations;
 
 namespace JobPortalAPI.DTOs.Applications
 {
     public class UpdateApplicationStatusDto
     {
         [Required]
-        [RegularExpression("^(Reviewed|Shortlisted|Rejected|Accepted)$")]
+        [RegularExpression(
+            "^(Pending|Reviewed|Shortlisted|Rejected|Accepted)$",
+            ErrorMessage = "Status must be Pending, Reviewed, Shortlisted, Rejected, or Accepted.")]
         public string Status { get; set; } = string.Empty;
     }
 }

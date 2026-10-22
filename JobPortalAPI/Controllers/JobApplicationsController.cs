@@ -1,4 +1,5 @@
-﻿using JobPortalAPI.Data;
+﻿
+using JobPortalAPI.Data;
 using JobPortalAPI.DTOs.Applications;
 using JobPortalAPI.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -23,22 +24,38 @@ namespace JobPortalAPI.Controllers
         [HttpPost("{jobId:int}")]
         public async Task<IActionResult> Apply(int jobId)
         {
-            var userId = int.Parse(
-                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            if (jobId <= 0)
+                return BadRequest("Invalid job ID.");
 
-            var jobExists = await _context.Jobs
-                .AnyAsync(j => j.Id == jobId);
+            var userIdValue = User.FindFirstValue(
+                ClaimTypes.NameIdentifier);
 
-            if (!jobExists)
+            if (!int.TryParse(userIdValue, out var userId))
+                return Unauthorized();
+
+            var job = await _context.Jobs
+                .AsNoTracking()
+                .FirstOrDefaultAsync(j => j.Id == jobId);
+
+            if (job == null)
                 return NotFound("Job not found.");
+
+            if (job.ApplicationDeadline.HasValue &&
+                job.ApplicationDeadline.Value <= DateTime.UtcNow)
+            {
+                return BadRequest(
+                    "The application deadline for this job has passed.");
+            }
 
             var alreadyApplied = await _context.JobApplications
                 .AnyAsync(a => a.JobId == jobId &&
                                a.JobSeekerId == userId);
 
             if (alreadyApplied)
+            {
                 return BadRequest(
                     "You have already applied for this job.");
+            }
 
             var application = new JobApplication
             {
@@ -56,7 +73,8 @@ namespace JobPortalAPI.Controllers
                 message = "Application submitted successfully.",
                 application.Id,
                 application.JobId,
-                application.Status
+                application.Status,
+                application.AppliedAt
             });
         }
 
@@ -64,12 +82,16 @@ namespace JobPortalAPI.Controllers
         [HttpGet("my-applications")]
         public async Task<IActionResult> GetMyApplications()
         {
-            var userId = int.Parse(
-                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var userIdValue = User.FindFirstValue(
+                ClaimTypes.NameIdentifier);
+
+            if (!int.TryParse(userIdValue, out var userId))
+                return Unauthorized();
 
             var applications = await _context.JobApplications
                 .AsNoTracking()
                 .Where(a => a.JobSeekerId == userId)
+                .OrderByDescending(a => a.AppliedAt)
                 .Select(a => new JobApplicationResponseDto
                 {
                     Id = a.Id,
@@ -91,6 +113,29 @@ namespace JobPortalAPI.Controllers
             int applicationId,
             [FromBody] UpdateApplicationStatusDto request)
         {
+            if (applicationId <= 0)
+                return BadRequest("Invalid application ID.");
+
+            var allowedStatuses = new[]
+            {
+                "Pending",
+                "Reviewed",
+                "Shortlisted",
+                "Rejected",
+                "Accepted"
+            };
+
+            if (string.IsNullOrWhiteSpace(request.Status) ||
+                !allowedStatuses.Contains(
+                    request.Status.Trim(),
+                    StringComparer.OrdinalIgnoreCase))
+            {
+                return BadRequest(new
+                {
+                    message = "Invalid status. Allowed values: Pending, Reviewed, Shortlisted, Rejected, Accepted."
+                });
+            }
+
             var application = await _context.JobApplications
                 .Include(a => a.Job)
                 .FirstOrDefaultAsync(a => a.Id == applicationId);
@@ -98,14 +143,23 @@ namespace JobPortalAPI.Controllers
             if (application == null)
                 return NotFound("Application not found.");
 
-            var userId = int.Parse(
-                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var userIdValue = User.FindFirstValue(
+                ClaimTypes.NameIdentifier);
+
+            if (!int.TryParse(userIdValue, out var userId))
+                return Unauthorized();
 
             if (application.Job!.EmployerId != userId &&
                 !User.IsInRole("Admin"))
+            {
                 return Forbid();
+            }
 
-            application.Status = request.Status;
+            application.Status = allowedStatuses.First(
+                s => s.Equals(
+                    request.Status.Trim(),
+                    StringComparison.OrdinalIgnoreCase));
+
             await _context.SaveChangesAsync();
 
             return Ok(new
@@ -116,17 +170,62 @@ namespace JobPortalAPI.Controllers
             });
         }
 
+
         [Authorize(Roles = "Employer,Admin")]
         [HttpGet("employer-applications")]
-        public async Task<IActionResult> GetEmployerApplications()
+        public async Task<IActionResult> GetEmployerApplications(
+            [FromQuery] int? jobId,
+            [FromQuery] string? status)
         {
-            var userId = int.Parse(
-                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var userIdValue = User.FindFirstValue(
+                ClaimTypes.NameIdentifier);
 
-            var applications = await _context.JobApplications
+            if (!int.TryParse(userIdValue, out var userId))
+                return Unauthorized();
+
+            var allowedStatuses = new[]
+            {
+                "Pending",
+                "Reviewed",
+                "Shortlisted",
+                "Rejected",
+                "Accepted"
+         };
+
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                status = status.Trim();
+
+                if (!allowedStatuses.Contains(
+                    status, StringComparer.OrdinalIgnoreCase))
+                {
+                    return BadRequest(new
+                    {
+                        message = "Invalid status filter."
+                    });
+                }
+
+                status = allowedStatuses.First(s =>
+                    s.Equals(status, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (jobId.HasValue && jobId.Value <= 0)
+                return BadRequest("Invalid job ID.");
+
+            var isAdmin = User.IsInRole("Admin");
+
+            var query = _context.JobApplications
                 .AsNoTracking()
-                .Where(a => User.IsInRole("Admin") ||
-                            a.Job!.EmployerId == userId)
+                .Where(a => isAdmin || a.Job!.EmployerId == userId);
+
+            if (jobId.HasValue)
+                query = query.Where(a => a.JobId == jobId.Value);
+
+            if (!string.IsNullOrWhiteSpace(status))
+                query = query.Where(a => a.Status == status);
+
+            var applications = await query
+                .OrderByDescending(a => a.AppliedAt)
                 .Select(a => new JobApplicationResponseDto
                 {
                     Id = a.Id,
@@ -141,5 +240,6 @@ namespace JobPortalAPI.Controllers
 
             return Ok(applications);
         }
+
     }
 }

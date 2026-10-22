@@ -1,4 +1,5 @@
-﻿using JobPortalAPI.DTOs.Jobs;
+﻿
+using JobPortalAPI.DTOs.Jobs;
 
 namespace JobPortalAPI.Interfaces
 {
@@ -8,10 +9,19 @@ namespace JobPortalAPI.Interfaces
             string? search,
             string? location,
             string? category,
+            string? jobType,
+            string? experienceLevel,
+            decimal? minSalary,
+            decimal? maxSalary,
+            string? sortBy,
             int page,
             int pageSize);
 
         Task<object?> GetJobByIdAsync(int id);
+
+        Task<object> GetEmployerDashboardAsync(
+            int userId,
+            bool isAdmin);
 
         Task<object> CreateJobAsync(
             JobCreateDto request,
